@@ -23,6 +23,7 @@ env.read_env()
 
 TG_TOKEN = env.str("TG_TOKEN")
 CHAT_ID = env.str("CHAT_ID")
+ALLOWED_USER_IDS = env.list("ALLOWED_USER_IDS", subcast=int)
 
 CONFIG_PATH = "config.json"
 PUBLISHED_IDS_PATH = "published_ids.json"
@@ -32,7 +33,17 @@ bot = Bot(token=TG_TOKEN)
 dp = Dispatcher()
 
 
-# ---------- Utility для изменения конфига ----------
+# ---------- Utility для изменения конфига и админ проверки ----------
+def admin_only(func):
+    async def wrapper(message: types.Message):
+        if message.from_user.id not in ALLOWED_USER_IDS:
+            await message.answer("⛔️ У вас нет доступа к этой команде")
+            logger.warning(f"Попытка доступа от {message.from_user.id} ({message.from_user.username})")
+            return
+        return await func(message)
+    return wrapper
+
+
 def update_config_param(param: str, value: int):
     config_file = Path(CONFIG_PATH)
     config = json.loads(config_file.read_text(encoding="utf-8"))
@@ -58,6 +69,7 @@ def settings_menu():
 
 # ---------- Хэндлеры ----------
 @dp.message(Command(commands=["start", "settings"]))
+@admin_only
 async def cmd_start(message: types.Message):
     config_file = Path(CONFIG_PATH)
     if not config_file.exists():
