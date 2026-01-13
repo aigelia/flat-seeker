@@ -1,0 +1,8 @@
+.venv/
+.idea
+__pycache__/
+*.pyc
+.env
+published_ids.json
+config.json
+.DS_Store
