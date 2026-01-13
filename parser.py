@@ -11,7 +11,6 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
 
 # -------------------- Logging --------------------
 logging.basicConfig(
@@ -62,8 +61,6 @@ class AruodasParser:
         if headless:
             options.add_argument("--headless=new")
 
-        options.binary_location = "/snap/bin/chromium"
-
         # Обход детекции
         options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_argument("--no-sandbox")
@@ -81,8 +78,9 @@ class AruodasParser:
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option("useAutomationExtension", False)
 
-        service = Service(ChromeDriverManager().install())
+        service = Service('/usr/local/bin/chromedriver')
         driver = webdriver.Chrome(service=service, options=options)
+
         driver.execute_script(
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         )
