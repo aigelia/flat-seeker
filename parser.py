@@ -27,7 +27,8 @@ class AruodasParser:
 
     def __init__(self, config_path: str = "config.json", headless: bool = True):
         self.config = self._load_config(config_path)
-        self.driver = self._init_driver(headless)
+        self.headless = headless
+        self.driver = None  # НЕ создаём драйвер в __init__
 
     # ---------- Config ----------
     def _load_config(self, path: str) -> dict:
@@ -56,51 +57,42 @@ class AruodasParser:
         )
 
     # ---------- Driver ----------
-    def _init_driver(self, headless: bool) -> webdriver.Chrome:
+    def _init_driver(self) -> webdriver.Chrome:
         options = Options()
-        if headless:
+        if self.headless:
             options.add_argument("--headless=new")
 
         options.binary_location = "/snap/bin/chromium"
 
-        # Обход детекции
-        options.add_argument("--disable-blink-features=AutomationControlled")
+        # Базовые флаги
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
+        options.add_argument("--single-process")
+
+        # Экономия памяти
         options.add_argument("--disable-extensions")
         options.add_argument("--disable-software-rasterizer")
-        options.add_argument("--disable-dev-tools")
-        options.add_argument("--no-first-run")
-        options.add_argument("--no-zygote")
-        options.add_argument("--single-process")
-        options.add_argument("--remote-debugging-port=9222")
-
         options.add_argument("--disable-background-networking")
         options.add_argument("--disable-sync")
         options.add_argument("--disable-translate")
-        options.add_argument("--disable-features=TranslateUI")
-        options.add_argument("--disable-features=BlinkGenPropertyTrees")
-        options.add_argument("--disable-ipc-flooding-protection")
-        options.add_argument("--disable-renderer-backgrounding")
-        options.add_argument("--disable-backgrounding-occluded-windows")
-        options.add_argument("--disable-client-side-phishing-detection")
         options.add_argument("--disable-default-apps")
         options.add_argument("--disable-hang-monitor")
         options.add_argument("--disable-popup-blocking")
         options.add_argument("--disable-prompt-on-repost")
+        options.add_argument("--disable-client-side-phishing-detection")
         options.add_argument("--metrics-recording-only")
         options.add_argument("--mute-audio")
+        options.add_argument("--no-first-run")
         options.add_argument("--no-default-browser-check")
-        options.add_argument("--safebrowsing-disable-auto-update")
         options.add_argument("--password-store=basic")
         options.add_argument("--use-mock-keychain")
-        options.add_argument("--force-color-profile=srgb")
-        options.add_argument("--memory-pressure-off")
-        options.add_argument("--disk-cache-size=1")  # минимальный кеш
+        options.add_argument("--disk-cache-size=1")
         options.add_argument("--media-cache-size=1")
         options.add_argument("--js-flags=--max-old-space-size=128")
 
+        # Обход детекции
+        options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option("useAutomationExtension", False)
 
@@ -126,28 +118,37 @@ class AruodasParser:
         seen_ids = set()
         max_pages = self.config.get("max_pages", 3)
 
-        for page in range(1, max_pages + 1):
-            url = self.build_search_url(page)
-            apartments = self._parse_page(url)
+        try:
+            # Создаём драйвер только перед парсингом
+            logger.info("Инициализация браузера...")
+            self.driver = self._init_driver()
 
-            if apartments is None:
-                logger.error(f"Критическая ошибка на странице {page}")
-                return None
+            for page in range(1, max_pages + 1):
+                url = self.build_search_url(page)
+                apartments = self._parse_page(url)
 
-            if not apartments:
-                break
+                if apartments is None:
+                    logger.error(f"Критическая ошибка на странице {page}")
+                    return None
 
-            # Дедупликация: добавляем только уникальные объявления
-            for apt in apartments:
-                if apt["id"] not in seen_ids:
-                    all_apartments.append(apt)
-                    seen_ids.add(apt["id"])
+                if not apartments:
+                    break
 
-            if page < max_pages:
-                time.sleep(2)
+                # Дедупликация: добавляем только уникальные объявления
+                for apt in apartments:
+                    if apt["id"] not in seen_ids:
+                        all_apartments.append(apt)
+                        seen_ids.add(apt["id"])
 
-        logger.info(f"Найдено {len(all_apartments)} уникальных квартир")
-        return all_apartments
+                if page < max_pages:
+                    time.sleep(2)
+
+            logger.info(f"Найдено {len(all_apartments)} уникальных квартир")
+            return all_apartments
+
+        finally:
+            # ВСЕГДА закрываем драйвер после парсинга
+            self.close()
 
     def _parse_page(self, url: str) -> Optional[List[Dict]]:
         try:
@@ -225,21 +226,19 @@ class AruodasParser:
     def close(self):
         if self.driver:
             try:
+                logger.info("Закрытие браузера...")
                 self.driver.quit()
+                self.driver = None
             except Exception as e:
                 logger.error(f"Ошибка при закрытии драйвера: {e}")
 
 
 # -------------------- Launcher for bot --------------------
 def fetch_new_apartments(
-    config_path: str = "config.json",
-    published_ids_path: str = "published_ids.json",
-    headless: bool = False,
+        config_path: str = "config.json",
+        published_ids_path: str = "published_ids.json",
+        headless: bool = True,
 ) -> Optional[List[Dict]]:
-    """
-    Парсит все квартиры и возвращает их БЕЗ ФИЛЬТРАЦИИ.
-    Фильтрацию делает бот, т.к. файл published_ids может измениться во время парсинга.
-    """
     parser = None
     try:
         parser = AruodasParser(config_path=config_path, headless=headless)
