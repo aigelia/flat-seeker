@@ -119,23 +119,40 @@ class AruodasParser:
 
             # Создаём контекст с минимальными настройками
             self.context = self.browser.new_context(
-                viewport={'width': 1280, 'height': 720},
-                user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                locale='ru-RU',
+                viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                locale='lt-LT',
                 timezone_id='Europe/Vilnius',
-                # Блокируем ненужные ресурсы для экономии памяти
                 java_script_enabled=True,
+                # Дополнительные headers для обхода Cloudflare
+                extra_http_headers={
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Accept-Language': 'lt-LT,lt;q=0.9,en-US;q=0.8,en;q=0.7,ru;q=0.6',
+                    'Sec-Fetch-Dest': 'document',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Site': 'none',
+                    'Sec-Fetch-User': '?1',
+                    'Upgrade-Insecure-Requests': '1',
+                    'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="131", "Google Chrome";v="131"',
+                    'sec-ch-ua-mobile': '?0',
+                    'sec-ch-ua-platform': '"Linux"',
+                },
             )
 
-            # Обход детекции автоматизации
+            # Обход детекции автоматизации (усиленный)
             self.context.add_init_script("""
+                // Удаляем webdriver
                 Object.defineProperty(navigator, 'webdriver', {
                     get: () => undefined
                 });
 
                 // Маскируем Chrome headless
                 window.chrome = {
-                    runtime: {}
+                    runtime: {},
+                    loadTimes: function() {},
+                    csi: function() {},
+                    app: {}
                 };
 
                 // Переопределяем permissions
@@ -145,6 +162,50 @@ class AruodasParser:
                         Promise.resolve({ state: Notification.permission }) :
                         originalQuery(parameters)
                 );
+
+                // Маскируем headless признаки
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => [1, 2, 3, 4, 5]
+                });
+
+                Object.defineProperty(navigator, 'languages', {
+                    get: () => ['lt-LT', 'lt', 'en-US', 'en']
+                });
+
+                // Переопределяем navigator.platform
+                Object.defineProperty(navigator, 'platform', {
+                    get: () => 'Linux x86_64'
+                });
+
+                // Добавляем fake battery API
+                navigator.getBattery = () => Promise.resolve({
+                    charging: true,
+                    chargingTime: 0,
+                    dischargingTime: Infinity,
+                    level: 1
+                });
+
+                // Переопределяем Connection API
+                Object.defineProperty(navigator, 'connection', {
+                    get: () => ({
+                        effectiveType: '4g',
+                        rtt: 50,
+                        downlink: 10,
+                        saveData: false
+                    })
+                });
+
+                // Маскируем отсутствие GPU
+                const getParameter = WebGLRenderingContext.prototype.getParameter;
+                WebGLRenderingContext.prototype.getParameter = function(parameter) {
+                    if (parameter === 37445) {
+                        return 'Intel Inc.';
+                    }
+                    if (parameter === 37446) {
+                        return 'Intel Iris OpenGL Engine';
+                    }
+                    return getParameter.call(this, parameter);
+                };
             """)
 
             # Блокируем ненужные ресурсы для экономии памяти и скорости
@@ -221,6 +282,9 @@ class AruodasParser:
     def _parse_page(self, url: str) -> Optional[List[Dict]]:
         try:
             logger.info(f"Открываем страницу: {url}")
+
+            # Небольшая задержка перед запросом (имитация человека)
+            time.sleep(1)
 
             # Переходим на страницу (не ждём полной загрузки)
             response = self.page.goto(url, wait_until='commit', timeout=20000)
