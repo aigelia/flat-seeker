@@ -1,6 +1,7 @@
 import json
 import logging
 import time
+import os
 from pathlib import Path
 from typing import List, Dict, Optional
 
@@ -28,7 +29,7 @@ class AruodasParser:
     def __init__(self, config_path: str = "config.json", headless: bool = True):
         self.config = self._load_config(config_path)
         self.headless = headless
-        self.driver = None  # НЕ создаём драйвер в __init__
+        self.driver = None
 
     # ---------- Config ----------
     def _load_config(self, path: str) -> dict:
@@ -60,17 +61,24 @@ class AruodasParser:
     def _init_driver(self) -> webdriver.Chrome:
         options = Options()
 
+        # НЕ добавляем --headless, т.к. используем xvfb
         options.binary_location = "/snap/bin/chromium"
 
-        # Базовые флаги
+        # Базовые флаги для стабильности
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
         options.add_argument("--single-process")
 
+        # НОВЫЕ ФЛАГИ для фикса DevToolsActivePort
+        options.add_argument("--disable-dev-tools")
+        options.add_argument("--no-zygote")
+        options.add_argument("--disable-setuid-sandbox")
+        options.add_argument("--remote-debugging-port=0")  # вместо 9222
+        options.add_argument("--disable-software-rasterizer")
+
         # Экономия памяти
         options.add_argument("--disable-extensions")
-        options.add_argument("--disable-software-rasterizer")
         options.add_argument("--disable-background-networking")
         options.add_argument("--disable-sync")
         options.add_argument("--disable-translate")
@@ -94,13 +102,23 @@ class AruodasParser:
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option("useAutomationExtension", False)
 
-        service = Service('/usr/local/bin/chromedriver')
-        driver = webdriver.Chrome(service=service, options=options)
+        # ВАЖНО: устанавливаем user-data-dir в /tmp
+        user_data_dir = "/tmp/chromium-data"
+        os.makedirs(user_data_dir, exist_ok=True)
+        options.add_argument(f"--user-data-dir={user_data_dir}")
 
-        driver.execute_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-        )
-        return driver
+        service = Service('/usr/local/bin/chromedriver')
+
+        try:
+            driver = webdriver.Chrome(service=service, options=options)
+            driver.execute_script(
+                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+            )
+            return driver
+        except Exception as e:
+            logger.error(f"Не удалось запустить браузер: {e}")
+            logger.info("Проверьте: 1) установлен ли chromium 2) установлен ли chromedriver 3) запущен ли xvfb")
+            raise
 
     # ---------- URL ----------
     def build_search_url(self, page: int = 1) -> str:
@@ -117,9 +135,9 @@ class AruodasParser:
         max_pages = self.config.get("max_pages", 3)
 
         try:
-            # Создаём драйвер только перед парсингом
             logger.info("Инициализация браузера...")
             self.driver = self._init_driver()
+            logger.info("Браузер успешно запущен")
 
             for page in range(1, max_pages + 1):
                 url = self.build_search_url(page)
@@ -132,7 +150,6 @@ class AruodasParser:
                 if not apartments:
                     break
 
-                # Дедупликация: добавляем только уникальные объявления
                 for apt in apartments:
                     if apt["id"] not in seen_ids:
                         all_apartments.append(apt)
@@ -145,14 +162,12 @@ class AruodasParser:
             return all_apartments
 
         finally:
-            # ВСЕГДА закрываем драйвер после парсинга
             self.close()
 
     def _parse_page(self, url: str) -> Optional[List[Dict]]:
         try:
             self.driver.get(url)
 
-            # Проверка на 403/блокировку
             if "403" in self.driver.title or "Access Denied" in self.driver.page_source:
                 logger.error("Получен 403 или блокировка")
                 return None
@@ -184,7 +199,7 @@ class AruodasParser:
             if not save_btn or not save_btn.get("data-id"):
                 return None
 
-            def text(cls, tag="div"):  # вспомогательная функция
+            def text(cls, tag="div"):
                 el = listing.find(tag, class_=cls)
                 return el.get_text(strip=True) if el else None
 
@@ -227,6 +242,7 @@ class AruodasParser:
                 logger.info("Закрытие браузера...")
                 self.driver.quit()
                 self.driver = None
+                logger.info("Браузер закрыт")
             except Exception as e:
                 logger.error(f"Ошибка при закрытии драйвера: {e}")
 
@@ -237,6 +253,10 @@ def fetch_new_apartments(
         published_ids_path: str = "published_ids.json",
         headless: bool = True,
 ) -> Optional[List[Dict]]:
+    """
+    Парсит все квартиры и возвращает их БЕЗ ФИЛЬТРАЦИИ.
+    Фильтрацию делает бот, т.к. файл published_ids может измениться во время парсинга.
+    """
     parser = None
     try:
         parser = AruodasParser(config_path=config_path, headless=headless)
