@@ -1,3 +1,6 @@
+import os
+import signal
+import subprocess
 import json
 import logging
 import time
@@ -228,7 +231,29 @@ class AruodasParser:
                 self.driver.quit()
             except Exception as e:
                 logger.error(f"Ошибка при закрытии драйвера: {e}")
-
+            finally:
+                self.driver = None
+                self._kill_chromium_processes()
+    @staticmethod
+    def _kill_chromium_processes(self):
+        """
+        Жёстко убивает все процессы chromium / chromedriver.
+        Да, это топорно. Зато эффективно против утечек памяти.
+        """
+        try:
+            subprocess.run(
+                ["pkill", "-9", "-f", "chromium"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            subprocess.run(
+                ["pkill", "-9", "-f", "chromedriver"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            logger.info("Chromium и chromedriver процессы убиты")
+        except Exception as e:
+            logger.warning(f"Не удалось прибить chromium процессы: {e}")
 
 # -------------------- Launcher for bot --------------------
 def fetch_new_apartments(
@@ -255,6 +280,39 @@ def fetch_new_apartments(
         logger.error(f"Ошибка парсинга: {e}", exc_info=True)
         return None
 
+
     finally:
+
         if parser is not None:
+
             parser.close()
+
+        else:
+
+            # если драйвер не создался, но chromium мог стартануть
+
+            try:
+
+                subprocess.run(
+
+                    ["pkill", "-9", "-f", "chromium"],
+
+                    stdout=subprocess.DEVNULL,
+
+                    stderr=subprocess.DEVNULL,
+
+                )
+
+                subprocess.run(
+
+                    ["pkill", "-9", "-f", "chromedriver"],
+
+                    stdout=subprocess.DEVNULL,
+
+                    stderr=subprocess.DEVNULL,
+
+                )
+
+            except Exception:
+
+                pass
