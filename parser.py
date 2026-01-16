@@ -1,3 +1,4 @@
+import os
 import json
 import logging
 import time
@@ -63,25 +64,21 @@ class AruodasParser:
 
         options.binary_location = "/snap/bin/chromium"
 
-        # Обход детекции
+        # Базовая защита от детекции
         options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
         options.add_argument("--disable-extensions")
         options.add_argument("--disable-software-rasterizer")
-        options.add_argument("--disable-dev-tools")
         options.add_argument("--no-first-run")
         options.add_argument("--no-zygote")
-        options.add_argument("--single-process")
-        options.add_argument("--remote-debugging-port=9222")
 
+        # Оптимизация фоновых процессов
         options.add_argument("--disable-background-networking")
         options.add_argument("--disable-sync")
         options.add_argument("--disable-translate")
         options.add_argument("--disable-features=TranslateUI")
-        options.add_argument("--disable-features=BlinkGenPropertyTrees")
-        options.add_argument("--disable-ipc-flooding-protection")
         options.add_argument("--disable-renderer-backgrounding")
         options.add_argument("--disable-backgrounding-occluded-windows")
         options.add_argument("--disable-client-side-phishing-detection")
@@ -96,20 +93,33 @@ class AruodasParser:
         options.add_argument("--password-store=basic")
         options.add_argument("--use-mock-keychain")
         options.add_argument("--force-color-profile=srgb")
-        options.add_argument("--memory-pressure-off")
-        options.add_argument("--disk-cache-size=1")  # минимальный кеш
+
+        # 🔥 ВАЖНО: убрали single-process и remote-debugging-port
+        # options.add_argument("--single-process")  ❌
+        # options.add_argument("--remote-debugging-port=9222") ❌
+
+        # Минимальный кэш
+        options.add_argument("--disk-cache-size=1")
         options.add_argument("--media-cache-size=1")
         options.add_argument("--js-flags=--max-old-space-size=128")
+
+        # 🔥 Отключаем картинки и шрифты — сильная экономия памяти
+        prefs = {
+            "profile.managed_default_content_settings.images": 2,
+            "profile.managed_default_content_settings.fonts": 2,
+        }
+        options.add_experimental_option("prefs", prefs)
 
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option("useAutomationExtension", False)
 
-        service = Service('/usr/local/bin/chromedriver')
+        service = Service("/usr/local/bin/chromedriver")
         driver = webdriver.Chrome(service=service, options=options)
 
         driver.execute_script(
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         )
+
         return driver
 
     # ---------- URL ----------
@@ -228,7 +238,8 @@ class AruodasParser:
                 self.driver.quit()
             except Exception as e:
                 logger.error(f"Ошибка при закрытии драйвера: {e}")
-
+            finally:
+                self.driver = None  # 🔥 критично для GC
 
 # -------------------- Launcher for bot --------------------
 def fetch_new_apartments(
@@ -258,3 +269,4 @@ def fetch_new_apartments(
     finally:
         if parser is not None:
             parser.close()
+            os.system("pkill -f chromium || true")

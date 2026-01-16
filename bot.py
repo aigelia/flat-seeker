@@ -29,7 +29,6 @@ CONFIG_PATH = "config.json"
 PUBLISHED_IDS_PATH = "published_ids.json"
 POLL_INTERVAL = 3600
 
-bot = Bot(token=TG_TOKEN)
 dp = Dispatcher()
 
 
@@ -172,7 +171,7 @@ async def send_apt(bot: Bot, chat_id: str, apt: dict, delay: float = 3.0, max_re
     return False
 
 
-async def periodic_parser():
+async def periodic_parser(bot: Bot):
     """
     Основной цикл: парсинг и отправка новых квартир с безопасной задержкой и записью после каждой отправки
     """
@@ -238,7 +237,7 @@ async def main():
             logger.error(f"Ошибка с чатом: {e}")
             return
 
-        asyncio.create_task(periodic_parser())
+        asyncio.create_task(periodic_parser(bot_instance))
         await dp.start_polling(bot_instance)
 
 
