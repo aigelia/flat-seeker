@@ -59,8 +59,6 @@ class AruodasParser:
     # ---------- Driver ----------
     def _init_driver(self) -> webdriver.Chrome:
         options = Options()
-        if self.headless:
-            options.add_argument("--headless=new")
 
         options.binary_location = "/snap/bin/chromium"
 
