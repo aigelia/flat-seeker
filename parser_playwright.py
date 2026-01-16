@@ -67,7 +67,9 @@ class AruodasParser:
             # Запускаем Chromium с оптимальными флагами
             self.browser = self.playwright.chromium.launch(
                 headless=self.headless,
+                executable_path='/snap/bin/chromium',  # Используем тот же Chromium что и Selenium
                 args=[
+                    '--disable-blink-features=AutomationControlled',  # КРИТИЧНО для обхода!
                     '--no-sandbox',
                     '--disable-dev-shm-usage',  # Критично для серверов с малой памятью
                     '--disable-gpu',
@@ -407,8 +409,13 @@ class AruodasParser:
                     pass
                 self.playwright = None
 
-            # Принудительная очистка памяти
+            # Небольшая пауза для завершения процессов браузера
+            time.sleep(0.5)
+
+            # Принудительная очистка памяти (дважды для надёжности)
             gc.collect()
+            gc.collect()
+
             logger.info("Playwright браузер закрыт и очищен")
 
         except Exception as e:
