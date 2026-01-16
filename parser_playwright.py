@@ -355,7 +355,7 @@ class AruodasParser:
 def fetch_new_apartments(
     config_path: str = "config.json",
     published_ids_path: str = "published_ids.json",
-    headless: bool = False,
+    headless: bool = True,
 ) -> Optional[List[Dict]]:
     """
     Парсит все квартиры и возвращает их БЕЗ ФИЛЬТРАЦИИ.
