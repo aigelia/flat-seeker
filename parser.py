@@ -279,9 +279,14 @@ class AruodasParser:
 # -------------------- Launcher --------------------
 def fetch_new_apartments(
     config_path: str = "config.json",
+    published_ids_path: str = "published_ids.json",  # ← ОБЯЗАТЕЛЬНО оставляем
     headless: bool = False,
     kill_chromium: bool = False,
 ) -> Optional[List[Dict]]:
+    """
+    Парсит все квартиры и возвращает их БЕЗ ФИЛЬТРАЦИИ.
+    published_ids_path намеренно не используется — фильтрация в боте.
+    """
     parser = None
     try:
         parser = AruodasParser(
@@ -290,6 +295,11 @@ def fetch_new_apartments(
             kill_chromium=kill_chromium,
         )
         return parser.parse_all_pages()
+
+    except Exception as e:
+        logger.error(f"Ошибка парсинга: {e}", exc_info=True)
+        return None
+
     finally:
         if parser:
             parser.close()
