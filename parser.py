@@ -1,7 +1,6 @@
 import json
 import logging
 import time
-import os
 from pathlib import Path
 from typing import List, Dict, Optional
 
@@ -28,8 +27,7 @@ class AruodasParser:
 
     def __init__(self, config_path: str = "config.json", headless: bool = True):
         self.config = self._load_config(config_path)
-        self.headless = headless
-        self.driver = None
+        self.driver = self._init_driver(headless)
 
     # ---------- Config ----------
     def _load_config(self, path: str) -> dict:
@@ -58,67 +56,61 @@ class AruodasParser:
         )
 
     # ---------- Driver ----------
-    def _init_driver(self) -> webdriver.Chrome:
+    def _init_driver(self, headless: bool) -> webdriver.Chrome:
         options = Options()
+        if headless:
+            options.add_argument("--headless=new")
 
-        # НЕ добавляем --headless, т.к. используем xvfb
         options.binary_location = "/snap/bin/chromium"
 
-        # Базовые флаги для стабильности
+        # Обход детекции
+        options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
-        options.add_argument("--single-process")
-
-        # НОВЫЕ ФЛАГИ для фикса DevToolsActivePort
-        options.add_argument("--disable-dev-tools")
-        options.add_argument("--no-zygote")
-        options.add_argument("--disable-setuid-sandbox")
-        options.add_argument("--remote-debugging-port=0")  # вместо 9222
-        options.add_argument("--disable-software-rasterizer")
-
-        # Экономия памяти
         options.add_argument("--disable-extensions")
+        options.add_argument("--disable-software-rasterizer")
+        options.add_argument("--disable-dev-tools")
+        options.add_argument("--no-first-run")
+        options.add_argument("--no-zygote")
+        options.add_argument("--single-process")
+        options.add_argument("--remote-debugging-port=9222")
+
         options.add_argument("--disable-background-networking")
         options.add_argument("--disable-sync")
         options.add_argument("--disable-translate")
+        options.add_argument("--disable-features=TranslateUI")
+        options.add_argument("--disable-features=BlinkGenPropertyTrees")
+        options.add_argument("--disable-ipc-flooding-protection")
+        options.add_argument("--disable-renderer-backgrounding")
+        options.add_argument("--disable-backgrounding-occluded-windows")
+        options.add_argument("--disable-client-side-phishing-detection")
         options.add_argument("--disable-default-apps")
         options.add_argument("--disable-hang-monitor")
         options.add_argument("--disable-popup-blocking")
         options.add_argument("--disable-prompt-on-repost")
-        options.add_argument("--disable-client-side-phishing-detection")
         options.add_argument("--metrics-recording-only")
         options.add_argument("--mute-audio")
-        options.add_argument("--no-first-run")
         options.add_argument("--no-default-browser-check")
+        options.add_argument("--safebrowsing-disable-auto-update")
         options.add_argument("--password-store=basic")
         options.add_argument("--use-mock-keychain")
-        options.add_argument("--disk-cache-size=1")
+        options.add_argument("--force-color-profile=srgb")
+        options.add_argument("--memory-pressure-off")
+        options.add_argument("--disk-cache-size=1")  # минимальный кеш
         options.add_argument("--media-cache-size=1")
         options.add_argument("--js-flags=--max-old-space-size=128")
 
-        # Обход детекции
-        options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option("useAutomationExtension", False)
 
-        # ВАЖНО: устанавливаем user-data-dir в /tmp
-        user_data_dir = "/tmp/chromium-data"
-        os.makedirs(user_data_dir, exist_ok=True)
-        options.add_argument(f"--user-data-dir={user_data_dir}")
-
         service = Service('/usr/local/bin/chromedriver')
+        driver = webdriver.Chrome(service=service, options=options)
 
-        try:
-            driver = webdriver.Chrome(service=service, options=options)
-            driver.execute_script(
-                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-            )
-            return driver
-        except Exception as e:
-            logger.error(f"Не удалось запустить браузер: {e}")
-            logger.info("Проверьте: 1) установлен ли chromium 2) установлен ли chromedriver 3) запущен ли xvfb")
-            raise
+        driver.execute_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+        )
+        return driver
 
     # ---------- URL ----------
     def build_search_url(self, page: int = 1) -> str:
@@ -134,40 +126,34 @@ class AruodasParser:
         seen_ids = set()
         max_pages = self.config.get("max_pages", 3)
 
-        try:
-            logger.info("Инициализация браузера...")
-            self.driver = self._init_driver()
-            logger.info("Браузер успешно запущен")
+        for page in range(1, max_pages + 1):
+            url = self.build_search_url(page)
+            apartments = self._parse_page(url)
 
-            for page in range(1, max_pages + 1):
-                url = self.build_search_url(page)
-                apartments = self._parse_page(url)
+            if apartments is None:
+                logger.error(f"Критическая ошибка на странице {page}")
+                return None
 
-                if apartments is None:
-                    logger.error(f"Критическая ошибка на странице {page}")
-                    return None
+            if not apartments:
+                break
 
-                if not apartments:
-                    break
+            # Дедупликация: добавляем только уникальные объявления
+            for apt in apartments:
+                if apt["id"] not in seen_ids:
+                    all_apartments.append(apt)
+                    seen_ids.add(apt["id"])
 
-                for apt in apartments:
-                    if apt["id"] not in seen_ids:
-                        all_apartments.append(apt)
-                        seen_ids.add(apt["id"])
+            if page < max_pages:
+                time.sleep(2)
 
-                if page < max_pages:
-                    time.sleep(2)
-
-            logger.info(f"Найдено {len(all_apartments)} уникальных квартир")
-            return all_apartments
-
-        finally:
-            self.close()
+        logger.info(f"Найдено {len(all_apartments)} уникальных квартир")
+        return all_apartments
 
     def _parse_page(self, url: str) -> Optional[List[Dict]]:
         try:
             self.driver.get(url)
 
+            # Проверка на 403/блокировку
             if "403" in self.driver.title or "Access Denied" in self.driver.page_source:
                 logger.error("Получен 403 или блокировка")
                 return None
@@ -199,7 +185,7 @@ class AruodasParser:
             if not save_btn or not save_btn.get("data-id"):
                 return None
 
-            def text(cls, tag="div"):
+            def text(cls, tag="div"):  # вспомогательная функция
                 el = listing.find(tag, class_=cls)
                 return el.get_text(strip=True) if el else None
 
@@ -239,19 +225,16 @@ class AruodasParser:
     def close(self):
         if self.driver:
             try:
-                logger.info("Закрытие браузера...")
                 self.driver.quit()
-                self.driver = None
-                logger.info("Браузер закрыт")
             except Exception as e:
                 logger.error(f"Ошибка при закрытии драйвера: {e}")
 
 
 # -------------------- Launcher for bot --------------------
 def fetch_new_apartments(
-        config_path: str = "config.json",
-        published_ids_path: str = "published_ids.json",
-        headless: bool = True,
+    config_path: str = "config.json",
+    published_ids_path: str = "published_ids.json",
+    headless: bool = False,
 ) -> Optional[List[Dict]]:
     """
     Парсит все квартиры и возвращает их БЕЗ ФИЛЬТРАЦИИ.
