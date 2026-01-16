@@ -1,6 +1,7 @@
 import gc
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import List, Dict, Optional
@@ -422,6 +423,22 @@ class AruodasParser:
             logger.error(f"Ошибка при закрытии браузера: {e}")
 
 
+# -------------------- Memory monitoring --------------------
+def log_memory_usage(stage: str):
+    """Логирует использование памяти процессом"""
+    try:
+        import psutil
+        process = psutil.Process(os.getpid())
+        mem_info = process.memory_info()
+        mem_mb = mem_info.rss / 1024 / 1024
+        logger.info(f"[{stage}] Память: {mem_mb:.1f} MB")
+    except ImportError:
+        # psutil не установлен - пропускаем
+        pass
+    except Exception as e:
+        logger.warning(f"Не удалось получить информацию о памяти: {e}")
+
+
 # -------------------- Launcher for bot --------------------
 def fetch_new_apartments(
     config_path: str = "config.json",
@@ -434,8 +451,13 @@ def fetch_new_apartments(
     """
     parser = None
     try:
+        log_memory_usage("До инициализации браузера")
+
         parser = AruodasParser(config_path=config_path, headless=headless)
+        log_memory_usage("После инициализации браузера")
+
         all_apartments = parser.parse_all_pages()
+        log_memory_usage("После парсинга всех страниц")
 
         if all_apartments is None:
             logger.error("Критическая ошибка парсинга")
@@ -452,3 +474,4 @@ def fetch_new_apartments(
             parser.close()
             del parser
             gc.collect()
+            log_memory_usage("После закрытия браузера")
