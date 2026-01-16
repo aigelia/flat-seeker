@@ -6,3 +6,4 @@ __pycache__/
 published_ids.json
 config.json
 .DS_Store
+PLAYWRIGHT_SETUP.md

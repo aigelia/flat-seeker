@@ -9,7 +9,7 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from environs import Env
-from parser import fetch_new_apartments
+from parser_playwright import fetch_new_apartments
 
 # ---------- Логирование ----------
 logging.basicConfig(
