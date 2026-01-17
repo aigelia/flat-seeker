@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 class AruodasParser:
     BASE_URL = "https://ru.aruodas.lt"
 
-    def __init__(self, config_path: str = "config.json", headless: bool = False):
+    def __init__(self, config_path: str = "config.json", headless: bool = True):
         self.config = self._load_config(config_path)
         self.headless = headless
         self.playwright = None
@@ -443,7 +443,7 @@ def log_memory_usage(stage: str):
 def fetch_new_apartments(
     config_path: str = "config.json",
     published_ids_path: str = "published_ids.json",
-    headless: bool = False,
+    headless: bool = True,
 ) -> Optional[List[Dict]]:
     """
     Парсит все квартиры и возвращает их БЕЗ ФИЛЬТРАЦИИ.
