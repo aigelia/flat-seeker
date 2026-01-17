@@ -1,17 +1,13 @@
 import gc
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import List, Dict, Optional
 
 from bs4 import BeautifulSoup
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
+from playwright.sync_api import sync_playwright, Page, Browser, BrowserContext, TimeoutError as PlaywrightTimeout
 
 # -------------------- Logging --------------------
 logging.basicConfig(
@@ -28,7 +24,12 @@ class AruodasParser:
 
     def __init__(self, config_path: str = "config.json", headless: bool = True):
         self.config = self._load_config(config_path)
-        self.driver = self._init_driver(headless)
+        self.headless = headless
+        self.playwright = None
+        self.browser = None
+        self.context = None
+        self.page = None
+        self._init_browser()
 
     # ---------- Config ----------
     def _load_config(self, path: str) -> dict:
@@ -56,62 +57,186 @@ class AruodasParser:
             json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8"
         )
 
-    # ---------- Driver ----------
-    def _init_driver(self, headless: bool) -> webdriver.Chrome:
-        options = Options()
-        if headless:
-            options.add_argument("--headless=new")
+    # ---------- Browser ----------
+    def _init_browser(self):
+        """
+        Инициализация браузера Playwright с оптимизацией для памяти
+        """
+        try:
+            self.playwright = sync_playwright().start()
 
-        options.binary_location = "/snap/bin/chromium"
+            # Запускаем Chromium с оптимальными флагами
+            self.browser = self.playwright.chromium.launch(
+                headless=self.headless,
+                executable_path='/snap/bin/chromium',  # Используем тот же Chromium что и Selenium
+                args=[
+                    '--disable-blink-features=AutomationControlled',  # КРИТИЧНО для обхода!
+                    '--no-sandbox',
+                    '--disable-dev-shm-usage',  # Критично для серверов с малой памятью
+                    '--disable-gpu',
+                    '--disable-software-rasterizer',
+                    '--disable-extensions',
+                    '--disable-background-networking',
+                    '--disable-sync',
+                    '--disable-translate',
+                    '--disable-features=TranslateUI',
+                    '--disable-features=BlinkGenPropertyTrees',
+                    '--disable-default-apps',
+                    '--disable-hang-monitor',
+                    '--disable-prompt-on-repost',
+                    '--metrics-recording-only',
+                    '--mute-audio',
+                    '--no-first-run',
+                    '--safebrowsing-disable-auto-update',
+                    '--disable-client-side-phishing-detection',
+                    '--disable-component-extensions-with-background-pages',
+                    '--disable-ipc-flooding-protection',
+                    '--disable-backgrounding-occluded-windows',
+                    '--disable-renderer-backgrounding',
+                    '--disable-field-trial-config',
+                    '--disable-back-forward-cache',
+                    '--disable-breakpad',
+                    '--disable-component-update',
+                    '--disable-domain-reliability',
+                    '--disable-features=AudioServiceOutOfProcess,IsolateOrigins,site-per-process',
+                    '--disable-features=ImprovedCookieControls,LazyFrameLoading,GlobalMediaControls,DestroyProfileOnBrowserClose,MediaRouter,AcceptCHFrame',
+                    '--disable-print-preview',
+                    '--disable-setuid-sandbox',
+                    '--disable-site-isolation-trials',
+                    '--disable-speech-api',
+                    '--disable-web-security',
+                    '--disk-cache-size=1',
+                    '--media-cache-size=1',
+                    '--aggressive-cache-discard',
+                    '--disable-cache',
+                    '--disable-application-cache',
+                    '--disable-offline-load-stale-cache',
+                    '--disk-cache-size=0',
+                    '--no-zygote',  # Экономит память
+                    # Лимит памяти для JS
+                    '--js-flags=--max-old-space-size=256',
+                ],
+                # Отключаем загрузку ненужных ресурсов
+                chromium_sandbox=False,
+            )
 
-        # Обход детекции
-        options.add_argument("--disable-blink-features=AutomationControlled")
-        options.add_argument("--no-sandbox")
-        options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-gpu")
-        options.add_argument("--disable-extensions")
-        options.add_argument("--disable-software-rasterizer")
-        options.add_argument("--disable-dev-tools")
-        options.add_argument("--no-first-run")
-        options.add_argument("--no-zygote")
-        options.add_argument("--single-process")
-        options.add_argument("--remote-debugging-port=9222")
+            # Создаём контекст с минимальными настройками
+            self.context = self.browser.new_context(
+                viewport={'width': 1920, 'height': 1080},
+                user_agent='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+                locale='lt-LT',
+                timezone_id='Europe/Vilnius',
+                java_script_enabled=True,
+                # Дополнительные headers для обхода Cloudflare
+                extra_http_headers={
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Accept-Language': 'lt-LT,lt;q=0.9,en-US;q=0.8,en;q=0.7,ru;q=0.6',
+                    'Sec-Fetch-Dest': 'document',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Site': 'none',
+                    'Sec-Fetch-User': '?1',
+                    'Upgrade-Insecure-Requests': '1',
+                    'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="131", "Google Chrome";v="131"',
+                    'sec-ch-ua-mobile': '?0',
+                    'sec-ch-ua-platform': '"Linux"',
+                },
+            )
 
-        options.add_argument("--disable-background-networking")
-        options.add_argument("--disable-sync")
-        options.add_argument("--disable-translate")
-        options.add_argument("--disable-features=TranslateUI")
-        options.add_argument("--disable-features=BlinkGenPropertyTrees")
-        options.add_argument("--disable-ipc-flooding-protection")
-        options.add_argument("--disable-renderer-backgrounding")
-        options.add_argument("--disable-backgrounding-occluded-windows")
-        options.add_argument("--disable-client-side-phishing-detection")
-        options.add_argument("--disable-default-apps")
-        options.add_argument("--disable-hang-monitor")
-        options.add_argument("--disable-popup-blocking")
-        options.add_argument("--disable-prompt-on-repost")
-        options.add_argument("--metrics-recording-only")
-        options.add_argument("--mute-audio")
-        options.add_argument("--no-default-browser-check")
-        options.add_argument("--safebrowsing-disable-auto-update")
-        options.add_argument("--password-store=basic")
-        options.add_argument("--use-mock-keychain")
-        options.add_argument("--force-color-profile=srgb")
-        options.add_argument("--memory-pressure-off")
-        options.add_argument("--disk-cache-size=1")  # минимальный кеш
-        options.add_argument("--media-cache-size=1")
-        options.add_argument("--js-flags=--max-old-space-size=128")
+            # Обход детекции автоматизации (усиленный)
+            self.context.add_init_script("""
+                // Удаляем webdriver
+                Object.defineProperty(navigator, 'webdriver', {
+                    get: () => undefined
+                });
 
-        options.add_experimental_option("excludeSwitches", ["enable-automation"])
-        options.add_experimental_option("useAutomationExtension", False)
+                // Маскируем Chrome headless
+                window.chrome = {
+                    runtime: {},
+                    loadTimes: function() {},
+                    csi: function() {},
+                    app: {}
+                };
 
-        service = Service('/usr/local/bin/chromedriver')
-        driver = webdriver.Chrome(service=service, options=options)
+                // Переопределяем permissions
+                const originalQuery = window.navigator.permissions.query;
+                window.navigator.permissions.query = (parameters) => (
+                    parameters.name === 'notifications' ?
+                        Promise.resolve({ state: Notification.permission }) :
+                        originalQuery(parameters)
+                );
 
-        driver.execute_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-        )
-        return driver
+                // Маскируем headless признаки
+                Object.defineProperty(navigator, 'plugins', {
+                    get: () => [1, 2, 3, 4, 5]
+                });
+
+                Object.defineProperty(navigator, 'languages', {
+                    get: () => ['lt-LT', 'lt', 'en-US', 'en']
+                });
+
+                // Переопределяем navigator.platform
+                Object.defineProperty(navigator, 'platform', {
+                    get: () => 'Linux x86_64'
+                });
+
+                // Добавляем fake battery API
+                navigator.getBattery = () => Promise.resolve({
+                    charging: true,
+                    chargingTime: 0,
+                    dischargingTime: Infinity,
+                    level: 1
+                });
+
+                // Переопределяем Connection API
+                Object.defineProperty(navigator, 'connection', {
+                    get: () => ({
+                        effectiveType: '4g',
+                        rtt: 50,
+                        downlink: 10,
+                        saveData: false
+                    })
+                });
+
+                // Маскируем отсутствие GPU
+                const getParameter = WebGLRenderingContext.prototype.getParameter;
+                WebGLRenderingContext.prototype.getParameter = function(parameter) {
+                    if (parameter === 37445) {
+                        return 'Intel Inc.';
+                    }
+                    if (parameter === 37446) {
+                        return 'Intel Iris OpenGL Engine';
+                    }
+                    return getParameter.call(this, parameter);
+                };
+            """)
+
+            # Блокируем ненужные ресурсы для экономии памяти и скорости
+            def block_resources(route):
+                resource_type = route.request.resource_type
+                if resource_type in ['image', 'media', 'font', 'stylesheet']:
+                    route.abort()
+                else:
+                    url = route.request.url
+                    if any(x in url for x in ['google-analytics', 'analytics.js', 'gtag', 'facebook.com', 'doubleclick']):
+                        route.abort()
+                    else:
+                        route.continue_()
+
+            self.context.route("**/*", block_resources)
+
+            self.page = self.context.new_page()
+
+            # Устанавливаем разумные таймауты
+            self.page.set_default_timeout(30000)  # 30 секунд
+            self.page.set_default_navigation_timeout(30000)
+
+            logger.info("Playwright браузер инициализирован")
+
+        except Exception as e:
+            logger.error(f"Ошибка инициализации браузера: {e}", exc_info=True)
+            self.close()
+            raise
 
     # ---------- URL ----------
     def build_search_url(self, page: int = 1) -> str:
@@ -127,28 +252,31 @@ class AruodasParser:
         seen_ids = set()
         max_pages = self.config.get("max_pages", 3)
 
-        for page in range(1, max_pages + 1):
-            url = self.build_search_url(page)
+        for page_num in range(1, max_pages + 1):
+            url = self.build_search_url(page_num)
             apartments = self._parse_page(url)
 
             if apartments is None:
-                logger.error(f"Критическая ошибка на странице {page}")
+                logger.error(f"Критическая ошибка на странице {page_num}")
                 return None
 
             if not apartments:
+                logger.info(f"Страница {page_num} пуста, останавливаем парсинг")
                 break
 
-            # Дедупликация: добавляем только уникальные объявления
+            # Дедупликация
             for apt in apartments:
                 if apt["id"] not in seen_ids:
                     all_apartments.append(apt)
                     seen_ids.add(apt["id"])
 
+            logger.info(f"Страница {page_num}: найдено {len(apartments)} объявлений")
+
             # Очистка после каждой страницы
             del apartments
             gc.collect()
 
-            if page < max_pages:
+            if page_num < max_pages:
                 time.sleep(2)
 
         logger.info(f"Найдено {len(all_apartments)} уникальных квартир")
@@ -156,37 +284,52 @@ class AruodasParser:
 
     def _parse_page(self, url: str) -> Optional[List[Dict]]:
         try:
-            self.driver.get(url)
+            logger.info(f"Открываем страницу: {url}")
 
-            # Проверка на 403/блокировку
-            if "403" in self.driver.title or "Access Denied" in self.driver.page_source:
-                logger.error("Получен 403 или блокировка")
+            # Небольшая задержка перед запросом (имитация человека)
+            time.sleep(1)
+
+            # Переходим на страницу (не ждём полной загрузки)
+            response = self.page.goto(url, wait_until='commit', timeout=20000)
+
+            if response is None or response.status != 200:
+                logger.error(f"Ошибка загрузки страницы: статус {response.status if response else 'None'}")
                 return None
 
-            time.sleep(3)
+            # Ждём загрузки списка объявлений (это главное)
             try:
-                WebDriverWait(self.driver, 15).until(
-                    EC.presence_of_element_located((By.CLASS_NAME, "list-row-v2"))
-                )
-            except Exception:
-                pass
+                self.page.wait_for_selector(".list-row-v2", timeout=10000)
+                logger.info("Объявления загружены")
+            except PlaywrightTimeout:
+                logger.warning("Таймаут ожидания объявлений, пробуем парсить то что есть")
 
-            soup = BeautifulSoup(self.driver.page_source, "html.parser")
+            # Короткая пауза для завершения рендера
+            time.sleep(1)
+
+            # Получаем HTML и парсим через BeautifulSoup
+            html = self.page.content()
+            soup = BeautifulSoup(html, "lxml")
             listings = soup.find_all("div", class_="list-row-v2")
 
             if not listings:
+                logger.warning("Не найдено объявлений на странице")
+                soup.decompose()
                 return []
 
-            apartments = [
-                self._parse_apartment(l) for l in listings if self._parse_apartment(l)
-            ]
+            apartments = []
+            for listing in listings:
+                apt = self._parse_apartment(listing)
+                if apt:
+                    apartments.append(apt)
 
-            # Очистка после каждой страницы
+            # Очистка
             soup.decompose()
             del soup
             del listings
+            del html
 
             return apartments
+
         except Exception as e:
             logger.error(f"Ошибка при парсинге страницы: {e}", exc_info=True)
             return None
@@ -197,7 +340,7 @@ class AruodasParser:
             if not save_btn or not save_btn.get("data-id"):
                 return None
 
-            def text(cls, tag="div"):  # вспомогательная функция
+            def text(cls, tag="div"):
                 el = listing.find(tag, class_=cls)
                 return el.get_text(strip=True) if el else None
 
@@ -235,24 +378,72 @@ class AruodasParser:
 
     # ---------- Close ----------
     def close(self):
-        if self.driver:
-            try:
-                # Очистка перед закрытием
-                self.driver.delete_all_cookies()
-                self.driver.execute_script("window.localStorage.clear();")
-                self.driver.execute_script("window.sessionStorage.clear();")
-                self.driver.quit()
-            except Exception as e:
-                logger.error(f"Ошибка при закрытии драйвера: {e}")
-            finally:
-                self.driver = None
+        """
+        Полная очистка ресурсов браузера
+        """
+        try:
+            if self.page:
+                try:
+                    self.page.close()
+                except:
+                    pass
+                self.page = None
+
+            if self.context:
+                try:
+                    self.context.close()
+                except:
+                    pass
+                self.context = None
+
+            if self.browser:
+                try:
+                    self.browser.close()
+                except:
+                    pass
+                self.browser = None
+
+            if self.playwright:
+                try:
+                    self.playwright.stop()
+                except:
+                    pass
+                self.playwright = None
+
+            # Небольшая пауза для завершения процессов браузера
+            time.sleep(0.5)
+
+            # Принудительная очистка памяти (дважды для надёжности)
+            gc.collect()
+            gc.collect()
+
+            logger.info("Playwright браузер закрыт и очищен")
+
+        except Exception as e:
+            logger.error(f"Ошибка при закрытии браузера: {e}")
+
+
+# -------------------- Memory monitoring --------------------
+def log_memory_usage(stage: str):
+    """Логирует использование памяти процессом"""
+    try:
+        import psutil
+        process = psutil.Process(os.getpid())
+        mem_info = process.memory_info()
+        mem_mb = mem_info.rss / 1024 / 1024
+        logger.info(f"[{stage}] Память: {mem_mb:.1f} MB")
+    except ImportError:
+        # psutil не установлен - пропускаем
+        pass
+    except Exception as e:
+        logger.warning(f"Не удалось получить информацию о памяти: {e}")
 
 
 # -------------------- Launcher for bot --------------------
 def fetch_new_apartments(
     config_path: str = "config.json",
     published_ids_path: str = "published_ids.json",
-    headless: bool = False,
+    headless: bool = True,
 ) -> Optional[List[Dict]]:
     """
     Парсит все квартиры и возвращает их БЕЗ ФИЛЬТРАЦИИ.
@@ -260,8 +451,13 @@ def fetch_new_apartments(
     """
     parser = None
     try:
+        log_memory_usage("До инициализации браузера")
+
         parser = AruodasParser(config_path=config_path, headless=headless)
+        log_memory_usage("После инициализации браузера")
+
         all_apartments = parser.parse_all_pages()
+        log_memory_usage("После парсинга всех страниц")
 
         if all_apartments is None:
             logger.error("Критическая ошибка парсинга")
@@ -278,3 +474,4 @@ def fetch_new_apartments(
             parser.close()
             del parser
             gc.collect()
+            log_memory_usage("После закрытия браузера")
