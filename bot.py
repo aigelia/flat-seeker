@@ -238,8 +238,10 @@ async def main():
             logger.error(f"Ошибка с чатом: {e}")
             return
 
-        asyncio.create_task(periodic_parser())
-        await dp.start_polling(bot_instance)
+        await asyncio.gather(
+            periodic_parser(),
+            dp.start_polling(bot_instance)
+        )
 
 
 if __name__ == "__main__":
