@@ -42,7 +42,6 @@ class AruodasParser:
                     "FAreaOverAllMin": 60,
                     "FPriceMax": 1200,
                     "detailed_search": 1,
-                    "pet_friendly": 1,
                 },
                 "city": "vilniuje",
                 "type": "butu-nuoma",
