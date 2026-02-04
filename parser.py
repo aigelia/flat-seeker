@@ -42,6 +42,7 @@ class AruodasParser:
                     "FAreaOverAllMin": 60,
                     "FPriceMax": 1200,
                     "detailed_search": 1,
+                    "pet_friendly": 1,
                 },
                 "city": "vilniuje",
                 "type": "butu-nuoma",
@@ -257,8 +258,12 @@ class AruodasParser:
             apartments = self._parse_page(url)
 
             if apartments is None:
-                logger.error(f"Критическая ошибка на странице {page_num}")
-                return None
+                if page_num == 1:
+                    logger.error(f"Критическая ошибка на первой странице")
+                    return None
+                else:
+                    logger.warning(f"Ошибка на странице {page_num} (возможно, страниц меньше {max_pages}), останавливаем парсинг")
+                    break
 
             if not apartments:
                 logger.info(f"Страница {page_num} пуста, останавливаем парсинг")
