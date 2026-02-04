@@ -46,7 +46,7 @@ class AruodasParser:
                 },
                 "city": "vilniuje",
                 "type": "butu-nuoma",
-                "max_pages": 3,
+                "max_pages": 5,
             }
             self._save_config(path, default)
             return default
@@ -241,9 +241,10 @@ class AruodasParser:
     # ---------- URL ----------
     def build_search_url(self, page: int = 1) -> str:
         params = "&".join(f"{k}={v}" for k, v in self.config["search_params"].items())
-        url = f"{self.BASE_URL}/{self.config['type']}/{self.config['city']}/?{params}"
         if page > 1:
-            url += f"&page={page}"
+            url = f"{self.BASE_URL}/{self.config['type']}/{self.config['city']}/puslapis/{page}/?{params}"
+        else:
+            url = f"{self.BASE_URL}/{self.config['type']}/{self.config['city']}/?{params}"
         return url
 
     # ---------- Parsing ----------
