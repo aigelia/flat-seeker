@@ -62,7 +62,10 @@ def settings_menu():
     kb.row(
         InlineKeyboardButton(text="📏 Расстояние от центра", callback_data="edit_FRadius"),
         InlineKeyboardButton(text="🏠 Мин. площадь", callback_data="edit_FAreaOverAllMin"),
+    )
+    kb.row(
         InlineKeyboardButton(text="💰 Макс. цена", callback_data="edit_FPriceMax"),
+        InlineKeyboardButton(text="🐾 С животными", callback_data="edit_pet_friendly"),
     )
     return kb.as_markup()
 
@@ -73,18 +76,20 @@ def settings_menu():
 async def cmd_start(message: types.Message):
     config_file = Path(CONFIG_PATH)
     if not config_file.exists():
-        default_config = {"search_params": {"FRadius": 5, "FAreaOverAllMin": 60, "FPriceMax": 1200}}
+        default_config = {"search_params": {"FRadius": 5, "FAreaOverAllMin": 60, "FPriceMax": 1200, "pet_friendly": 1}}
         config_file.write_text(json.dumps(default_config, ensure_ascii=False, indent=2), encoding="utf-8")
         logger.info("Создан дефолтный config.json")
 
     config = json.loads(config_file.read_text(encoding="utf-8"))
     params = config.get("search_params", {})
 
+    pet_friendly_status = "Да" if params.get('pet_friendly', 0) == 1 else "Нет"
     text = (
         f"Привет! Текущие параметры поиска:\n"
         f"📏 Расстояние от центра: {params.get('FRadius', '—')}\n"
         f"🏠 Мин. площадь: {params.get('FAreaOverAllMin', '—')} м²\n"
-        f"💰 Макс. цена: {params.get('FPriceMax', '—')}\n\n"
+        f"💰 Макс. цена: {params.get('FPriceMax', '—')}\n"
+        f"🐾 С животными: {pet_friendly_status}\n\n"
         f"Выбери, что хочешь изменить:"
     )
 
@@ -96,17 +101,27 @@ async def callbacks(call: types.CallbackQuery):
     param_map = {
         "edit_FRadius": ("FRadius", "📏 Расстояние от центра"),
         "edit_FAreaOverAllMin": ("FAreaOverAllMin", "🏠 Мин. площадь"),
-        "edit_FPriceMax": ("FPriceMax", "💰 Макс. цена")
+        "edit_FPriceMax": ("FPriceMax", "💰 Макс. цена"),
+        "edit_pet_friendly": ("pet_friendly", "🐾 С животными")
     }
 
     if call.data in param_map:
         param_name, param_label = param_map[call.data]
-        await call.message.answer(
-            f"Чтобы изменить {param_label}, используй команду:\n"
-            f"<code>/set {param_name} значение</code>\n\n"
-            f"Например: <code>/set {param_name} 100</code>",
-            parse_mode="HTML"
-        )
+        if param_name == "pet_friendly":
+            await call.message.answer(
+                f"Чтобы изменить {param_label}, используй команду:\n"
+                f"<code>/set {param_name} значение</code>\n\n"
+                f"Где значение: <code>1</code> (Да) или <code>0</code> (Нет)\n"
+                f"Например: <code>/set {param_name} 1</code>",
+                parse_mode="HTML"
+            )
+        else:
+            await call.message.answer(
+                f"Чтобы изменить {param_label}, используй команду:\n"
+                f"<code>/set {param_name} значение</code>\n\n"
+                f"Например: <code>/set {param_name} 100</code>",
+                parse_mode="HTML"
+            )
         await call.answer()
 
 @dp.message(Command(commands=["set"]))
